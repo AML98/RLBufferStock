@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 import wandb
+import copy
 
 from history import History
 
@@ -22,8 +23,8 @@ class Agent(ABC):
     def learn(self):
         pass
 
-    def interact(self, env, n_episodes, train, shift=0, 
-        keep_history=False):
+    def interact(self, env, n_episodes, train, keep_history=False,
+        shift=0, track=None, do_print=True):
         '''
         Simulate interaction with an environment using the agent
         '''
@@ -51,18 +52,28 @@ class Agent(ABC):
         if train:
             #wandb.init(project='Speciale')
 
-            # Find a way to fix this
-            self.explore_noise = 0.2
+            self.set_explore_noise(self.ini_explore_noise)
+
+            if track is not None:
+                agents = []
 
             for episode in range(n_episodes):
-                self._print_progress(episode)
                 self._run_episode(env, episode, train, shift=shift)
+
+                if track and episode in track:
+                    agents.append(copy.deepcopy(self))
+
+                if do_print:
+                    self._print_progress(episode)
 
             #wandb.finish()
 
         else:
             for episode in range(n_episodes):
                 self._run_episode(env, episode, train, shift=shift)
+
+        if track:
+            return agents
 
     # -------------------
     # - Private methods -
@@ -95,7 +106,7 @@ class Agent(ABC):
                     c_loss, a_loss = self.learn()
 
                 if hasattr(self, 'explore_noise'):
-                    self.explore_noise *= 0.995
+                    self.explore_noise *= self.noise_decay
 
                 #if a_loss is not None:
                 #    wandb.log({

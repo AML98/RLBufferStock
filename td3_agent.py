@@ -35,12 +35,13 @@ class TD3Agent(Agent):
         self.batch_size = 512
         self.buffer_size = 1_000_000
         self.ini_explore_noise = 0.2
-        self.explore_noise = 0.2  # Will be depreciated
+        self.explore_noise = None  # Will be depreciated - set later
+        self.noise_decay = 0.9975
 
         # Policy updates
         self.total_it = 0
         self.policy_noise = 0.2
-        self.policy_delay = 2 # Can interfere with time state?
+        self.policy_delay = 2  # Can interfere with time state?
         self.noise_clip = 0.5
 
         # Update attributes with kwargs
@@ -52,6 +53,9 @@ class TD3Agent(Agent):
 
         # Replay buffer
         self.replay_buffer = ReplayBuffer(max_size=self.buffer_size)
+
+        # Exploration noise
+        self.set_explore_noise(self.ini_explore_noise)
 
     # ------------------
     # - Public methods -
@@ -115,6 +119,9 @@ class TD3Agent(Agent):
         action = np.clip(action, self.action_low, self.action_high)
 
         return action
+
+    def set_explore_noise(self, explore_noise):
+        self.explore_noise = explore_noise
     
     # -------------------
     # - Private methods -

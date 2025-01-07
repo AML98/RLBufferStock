@@ -2,26 +2,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-
-plt.rcParams.update({
-    "axes.grid": True, 
-    "grid.color": "black",
-    "grid.linestyle": "--", 
-    "grid.alpha": 0.25,
-    "font.size": 20,
-    "font.family": "sans-serif", 
-    "pgf.texsystem": "pdflatex",
-    "lines.linewidth": 3.0
-})
-
-
 # ---------
 # - Plots -
 # ---------
 
 def plot_avg_trajectories_separate(*items, var_list, con_bands=True, 
-    start_period1=0, start_period2=0, save=False):
+    start_period1=0, start_period2=0, train_agents=None, save=None):
     """
     Plot average trajectories of multiple variables in separate 
     subplots, arranged in a 2-column layout.
@@ -57,10 +43,6 @@ def plot_avg_trajectories_separate(*items, var_list, con_bands=True,
         figsize=(15, 5 * num_rows))
     axes = axes.flatten()
 
-    # Colors and line styles to differentiate between items
-    linestyles = ['-', '--']
-    colors = ['blue', 'red']
-
     # Containers to use for legend
     lines = []
     labels = []
@@ -69,11 +51,14 @@ def plot_avg_trajectories_separate(*items, var_list, con_bands=True,
         var = var_list[i]
         ax = axes[i]
 
-        for j in range(len(items)):
-            linestyle = linestyles[j]
-            color = colors[j]
-            item = items[j]
+        # Colors and line styles to differentiate between items
+        colors = ['blue', 'red', 'green']
+        linestyles = ['-', '--', '-.']
 
+        for j in range(len(items)):
+            item = items[j]
+            color = colors[j]
+            linestyle = linestyles[j]
             history = item.history if hasattr(item, 'history') else item
 
             # If 1st item, plot con_band from initial period
@@ -97,6 +82,19 @@ def plot_avg_trajectories_separate(*items, var_list, con_bands=True,
                 lines.append(line)
                 labels.append(f'{history.name}')
 
+        # Plot training process  
+        if train_agents is not None:
+            colors_train = plt.cm.Blues(np.linspace(0.1, 0.9, 
+                len(train_agents)))
+
+            for k, agent in enumerate(train_agents):
+                line = agent.history.plot_avg_trajectory(var, 
+                    color=colors_train[k], linestyle='-', 
+                    con_bands=False, var_legends=False,
+                    start_period=0, linewidth=1.0, 
+                    alpha=1.0, ax=ax)
+
+        # Shock line
         if start_period2 != 0:
             ax.axvline(x=start_period2, color='black', linewidth=1)
 
@@ -108,14 +106,85 @@ def plot_avg_trajectories_separate(*items, var_list, con_bands=True,
         fig.delaxes(axes[i])
 
     plt.tight_layout()
-    plt.show()
 
-    if save:
-        fig.savefig("plot_trajectories.pgf", format="pgf", 
-            bbox_inches="tight")
+    if save is not None:
+        fig.savefig(save, format="pgf", bbox_inches="tight")
+        plt.close()
+    else:
+        plt.show()
+
+def plot_avg_trajectories_separate2(*agent_dicts, var_list, shock_line=None,
+    save=None):
+    """
+    """
+
+    # Subplot structure
+    num_cols = 2
+    num_plots = len(var_list)
+    num_rows = num_plots // num_cols + num_plots % num_cols
+    fig, axes = plt.subplots(num_rows, num_cols, 
+        figsize=(15, 5 * num_rows))
+    axes = axes.flatten()
+
+    # Containers to use for legend
+    lines = []
+    labels = []
+
+    for i in range(len(var_list)):
+        var = var_list[i]
+        ax = axes[i]
+
+        for agent_dict in agent_dicts:
+            # Data
+            history = agent_dict['history']
+
+            # Layout
+            label = agent_dict['label']
+            color = agent_dict['color']
+            linestyle = agent_dict['linestyle']
+            linewidth = agent_dict['linewidth']
+            linestart = agent_dict['linestart']
+            cf_start = agent_dict['cf_start']
+
+            if 'alpha' in agent_dict:
+                alpha = agent_dict['alpha']
+            else:
+                alpha = 1.0
+
+            # Plot
+            line = history.plot_avg_trajectory2(var, color=color,
+                linestyle=linestyle, linewidth=linewidth, 
+                linestart=linestart, cf_start=cf_start, 
+                label=label, alpha=alpha, ax=ax)
+
+            # Add only for 1st var to avoid duplicate legends
+            if i == 0:
+                lines.append(line)
+                labels.append(label)
+
+        ax.set_title(f'${var}_t$')
+
+        # Shock line
+        if shock_line is not None:
+            ax.axvline(x=shock_line, color='black', linewidth=1)
+
+    fig.legend(lines, labels, loc="upper center", 
+        bbox_to_anchor=(0.5, 0.0), ncol=len(var_list), frameon=False)
+
+    # Hide any unused subplots
+    for i in range(len(var_list), len(axes)):
+        fig.delaxes(axes[i])
+
+    plt.tight_layout()
+
+    if save is not None:
+        fig.savefig(save, format="pgf", bbox_inches="tight")
+        plt.close()
+    else:
+        plt.show()
 
 def plot_avg_trajectories_together(*items, var_list, con_bands=True,
-    start_period1=0, start_period2=0, save=False):
+    start_period1=0, start_period2=0, save=None):
     """
     Plot average trajectories of multiple variables in same plot.
 
@@ -187,10 +256,45 @@ def plot_avg_trajectories_together(*items, var_list, con_bands=True,
         ncol=len(var_list), frameon=False)
         
     plt.tight_layout()
-    plt.show()
 
-    if save:
-        fig.savefig("plot_trajectories.pgf", format="pgf", bbox_inches="tight")
+    if save is not None:
+        fig.savefig(save, format="pgf", bbox_inches="tight")
+        plt.close()
+    else:
+        plt.show()
+
+def plot_value(*history_managers, mean1=False, mean2=False,
+    window_size=None, save=None):
+    """
+    Plot the life-time utility averaged across training runs.
+    """
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+
+    # Colors to differentiate between histories
+    colors = ['blue', 'red', 'green']
+
+    for i, history_man in enumerate(history_managers):
+        color = colors[i]
+        if i == 1 and mean1:
+            line = history_man.plot_average_value(color=color, 
+                linestyle='--', mean=mean1, window_size=window_size,
+                ax=ax)
+        elif i == 2 and mean2:
+            line = history_man.plot_average_value(color=color, 
+                linestyle='--', mean=mean2, window_size=window_size,
+                ax=ax)
+        else:
+            line = history_man.plot_average_value(color=color, 
+                linestyle='-', window_size=window_size,
+                ax=ax)
+
+    plt.tight_layout()
+
+    if save is not None:
+        fig.savefig(save, format="pgf", bbox_inches="tight")
+        plt.close(fig)
+    else:
+        plt.show()
 
 # ----------
 # - Prints -

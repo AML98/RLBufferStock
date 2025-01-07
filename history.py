@@ -1,17 +1,7 @@
+import os
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
-
-plt.rcParams.update({
-    "axes.grid": True, 
-    "grid.color": "black",
-    "grid.linestyle": "--", 
-    "grid.alpha": 0.25,
-    "font.size": 20,
-    "font.family": "sans-serif", 
-    "pgf.texsystem": "pdflatex",
-    "lines.linewidth": 3.0
-})
 
 
 class History:
@@ -65,8 +55,9 @@ class History:
             elif env.period == env.T-1:
                 getattr(self, var['name'])[episode] = value
 
-    def plot_avg_trajectory(self, var, color, linestyle, 
-        con_bands, var_legends, start_period, ax=None):
+    def plot_avg_trajectory(self, var, color, linestyle,
+        con_bands, var_legends, start_period, linewidth=2, 
+        alpha=1.0, ax=None):
         """
         Plot average trajectories of variables.
 
@@ -124,10 +115,12 @@ class History:
         # Plot average trajectory
         if var_legends:
             line, = ax.plot(x_axis, var_avg, label=f'${var}_t$, {self.name}',
-                color=color, linestyle=linestyle)
+                color=color, linestyle=linestyle, linewidth=linewidth, 
+                alpha=alpha)
         else:
             line, = ax.plot(x_axis, var_avg, label=f'{self.name}', 
-                color=color, linestyle=linestyle)
+                color=color, linestyle=linestyle, linewidth=linewidth,
+                alpha=alpha)
             
         # Plot confidence band
         if con_bands:
@@ -139,15 +132,76 @@ class History:
                 alpha=0.2)
             
         return line
+    
+    def plot_avg_trajectory2(self, var, color, linestyle, linewidth,
+        linestart, cf_start, label, alpha=1.0, ax=None):
+        """
+        """
+
+        # Use the provided axis or get the current axis
+        if ax is None:
+            ax = plt.gca()
+
+        # Layout
+        num_periods = getattr(self, var).shape[1]  # Shape[1] = T
+        ax.set_xticks(np.arange(num_periods, step=2))
+        ax.set_xlim([0, num_periods-1])
+        ax.set_xlabel('$t$')
+
+        # Get data
+        data = getattr(self, var)
+        var_std = np.std(data, axis=0)
+        var_avg = np.mean(data, axis=0)
+        x_axis = np.arange(num_periods)
+
+        # Plot average trajectory
+        line, = ax.plot(x_axis[linestart:], var_avg[linestart:], 
+            label=label, color=color, linestyle=linestyle,
+            linewidth=linewidth, alpha=alpha)
+            
+        # Plot confidence band
+        if cf_start is not None:
+            upper = var_avg + var_std
+            lower = var_avg - var_std
+            x_axis = x_axis
+
+            ax.fill_between(x_axis[cf_start:], lower[cf_start:], 
+                upper[cf_start:], color=color, alpha=0.2)
+            
+        return line
+    
+    def plot_value(self, color, linestyle, ax=None):
+        """
+        Plot the value across episodes.
+        """
+        if ax is None:
+            ax = plt.gca()
+        
+        # Layout
+        num_episodes = getattr(self, 'value').shape[0]  # Shape[0] = episodes
+        ax.set_xticks(np.arange(num_episodes, step=100))
+        ax.set_xlim([0, num_episodes-1])
+        ax.set_xlabel('Episode')
+
+        # Get data
+        data = getattr(self, 'value')
+        x_axis = np.arange(num_episodes)
+
+        # Plot value
+        line, = ax.plot(x_axis, data, label=f'{self.name}',
+                color=color, linestyle=linestyle)
+
+        return line
 
     def save(self, filename=None):
         """
         Save the entire History object to a file using pickle.
         """
+        folder = "histories"
         if filename is None:
             filename = f'history_{self.name}.pkl'
-        
-        with open(filename, 'wb') as file:
+        filepath = os.path.join(folder, filename)
+        with open(filepath, 'wb') as file:
             pickle.dump(self, file)
 
     @staticmethod
@@ -155,7 +209,9 @@ class History:
         """
         Load a History object from a file using pickle.
         """
-        with open(filename, 'rb') as file:
+        folder = "histories"
+        filepath = os.path.join(folder, filename)
+        with open(filepath, 'rb') as file:
             history = pickle.load(file)
 
         return history
