@@ -16,8 +16,8 @@ class BufferStockEnv(BaseEnv):
 
         # State vars: permanent income, market resources, and time
         default_state_vars = [
-            {'name': 'p', 'ini': 1.0, 'low': 0.0, 'high': 100},
-            {'name': 'm', 'ini': 1.0, 'low': 0.0, 'high': 100},
+            {'name': 'p', 'ini': [0,2], 'low': 0.0, 'high': 100},
+            {'name': 'm', 'ini': [0,2], 'low': 0.0, 'high': 100},
             {'name': 't', 'ini': 0.0, 'low': 0.0, 'high': 1.0}
         ]
         
@@ -97,7 +97,8 @@ class BufferStockEnv(BaseEnv):
 
         # Utility and reward
         utility = self._compute_utility(c)
-        reward = np.clip(utility + 3, -5, 5)
+        reward = self._compute_rescaled_utility(c)
+        #reward = np.clip(utility + 3, -5, 5)
 
         self.utility = utility
         self.reward = reward
@@ -154,3 +155,17 @@ class BufferStockEnv(BaseEnv):
             utility = (c + 1e-8) ** (1 - self.rho) / (1 - self.rho)
         
         return utility
+    
+    def _compute_rescaled_utility(self, c):
+        '''
+        Rescale CRRA utility to be between -1 and 1
+        '''
+        c_min = 0
+        c_max = 10
+        u_min = self._compute_utility(c_min)
+        u_max = self._compute_utility(c_max)
+        
+        A = 2 / (u_max - u_min)
+        B = -1 - A * u_min
+
+        return A * self._compute_utility(c) + B

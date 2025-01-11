@@ -1,3 +1,4 @@
+from matplotlib import pyplot as plt
 from abc import ABC, abstractmethod
 import numpy as np
 import wandb
@@ -24,7 +25,7 @@ class Agent(ABC):
         pass
 
     def interact(self, env, n_episodes, train, keep_history=False,
-        shift=0, track=None, do_print=True):
+        shift=0, track=None, do_print=True, inis=None):
         '''
         Simulate interaction with an environment using the agent
         '''
@@ -36,11 +37,39 @@ class Agent(ABC):
             {'name': 'value', 
             'shape': (n_episodes,), 
             'function': History._compute_value},
+
+            # Consumption rate
+            {'name': 'c_rate',
+            'shape': (n_episodes, env.T),
+            'function': History._compute_consumption_rate},
             
             # Savings rate
             {'name': 's',
             'shape': (n_episodes, env.T),
-            'function': History._compute_savings_rate}
+            'function': History._compute_savings_rate},
+
+            # Savings
+            {'name': 'savings',
+            'shape': (n_episodes, env.T),
+            'function': History._compute_savings},
+            
+            # Wealth ratio
+            {'name': 'x',
+            'shape': (n_episodes, env.T),
+            'function': History._compute_wealth_ratio},
+
+            # Normalized variables
+            {'name': 'm/p',
+            'shape': (n_episodes, env.T),
+            'function': History._normalize_cash_on_hand},
+
+            {'name': 'c/p',
+            'shape': (n_episodes, env.T),
+            'function': History._normalize_consumption},
+
+            {'name': 'a/p',
+            'shape': (n_episodes, env.T),
+            'function': History._normalize_assets}
 
             ]
 
@@ -58,7 +87,13 @@ class Agent(ABC):
                 agents = []
 
             for episode in range(n_episodes):
-                self._run_episode(env, episode, train, shift=shift)
+
+                if inis is not None:
+                    ini = inis[episode]
+                else:
+                    ini = None
+
+                self._run_episode(env, episode, train, ini=ini, shift=shift)
 
                 if track and episode in track:
                     agents.append(copy.deepcopy(self))
@@ -70,7 +105,13 @@ class Agent(ABC):
 
         else:
             for episode in range(n_episodes):
-                self._run_episode(env, episode, train, shift=shift)
+
+                if inis is not None:
+                    ini = inis[episode]
+                else:
+                    ini = None
+
+                self._run_episode(env, episode, train, ini, shift=shift)
 
         if track:
             return agents
@@ -79,11 +120,11 @@ class Agent(ABC):
     # - Private methods -
     # -------------------
 
-    def _run_episode(self, env, episode, train, shift=0):
+    def _run_episode(self, env, episode, train, ini=None, shift=0):
         '''
         Run episode
         '''
-        state = env.reset()
+        state = env.reset(ini)
         done = False
         
         while not done:

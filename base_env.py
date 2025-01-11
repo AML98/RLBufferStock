@@ -67,17 +67,39 @@ class BaseEnv(ABC, gym.Env):
 
         return state, self.reward, self.done, {}
     
-    def reset(self):
+    def reset(self, ini=None):
         '''
         '''
         self.done = False
         self.reward = 0.0
         self.period = self.reset_period
         
-        for state_var in self.state_vars:
-            ini = getattr(self, f"ini_{state_var['name']}")
-            setattr(self, state_var['name'], ini)
-        
+        # Custom initial state
+        if ini is not None:
+            for state_var in self.state_vars:
+                setattr(self, state_var['name'], ini[state_var['name']])
+
+        else:
+            for state_var in self.state_vars:
+                ini = getattr(self, f"ini_{state_var['name']}")
+                
+                # If random initial state
+                if isinstance(ini, list) == True:
+                    ini = self.np_random.uniform(low=ini[0], 
+                        high=ini[1])
+                
+                setattr(self, state_var['name'], ini)
+
+        for add_var in self.additional_vars:
+            if hasattr(self, f"ini_{add_var['name']}") == True:
+                ini = getattr(self, f"ini_{add_var['name']}")
+
+                if isinstance(ini, list) == True:
+                    ini = self.np_random.uniform(low=ini[0], 
+                        high=ini[1])
+                
+                setattr(self, add_var['name'], ini)
+
         # Return state as numpy array
         state = np.array([getattr(self, state_var['name']) 
             for state_var in self.state_vars])
