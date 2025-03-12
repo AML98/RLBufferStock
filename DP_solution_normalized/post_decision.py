@@ -11,32 +11,18 @@ from . import utility
 
 @njit(parallel=True)
 def compute_wq(t, sol, par, compute_w=False, compute_q=False):
-    """
-    Compute post-decision value w(a) and/or q(a) in the *normalized* model.
 
-    In the normalized Carroll model:
-        a_t = m_t - c_t
-        m_{t+1} = (R / psi_{t+1}) * a_t + xi_{t+1}
+    w_a = sol.w
+    q_a = sol.q
 
-    So we need only 1D interpolation in next-period 'm'.
-    """
-
-    # Shortcuts to storage
-    w_a = sol.w  # shape (Na,)
-    q_a = sol.q  # shape (Na,)
-
-    # Next-period value and consumption
-    # v_{t+1}(m_{t+1}) and c_{t+1}(m_{t+1}) each shape (Nm,)
+    # next-period value and consumption
     v_next = sol.v[t+1]
     c_next = sol.c[t+1]
 
     # grids
-    grid_a = par.grid_a  # shape (Na,)
+    grid_a = par.grid_a
     Nm = par.Nm
     Na = par.Na
-
-    # We'll create an array to store next-period m-values
-    m_plus_arr = np.empty(Na)
 
     # initialize post-decision arrays
     if compute_w:
@@ -46,12 +32,10 @@ def compute_wq(t, sol, par, compute_w=False, compute_q=False):
         for ia in range(Na):
             q_a[ia] = 0.0
 
-    # Loop over assets (post-decision state)
-    # NOTE: We can parallelize over ia or do it sequentially
+    # Loop over post-decision states
     for ia in prange(Na):
         a_val = grid_a[ia]
-
-        # We'll accumulate expectations over all shocks
+        
         w_temp = 0.0
         q_temp = 0.0
 

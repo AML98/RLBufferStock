@@ -12,14 +12,10 @@ def solve(t, sol, par):
     i.e., c_t = m_t (since there's no future).
     """
 
-    v = sol.v[t]  # shape (Nm,)
-    c = sol.c[t]  # shape (Nm,)
+    v = sol.v[t]
+    c = sol.c[t]
 
-    for im in prange(par.Nm):  # parallel loop over the m-grid
+    for im in prange(par.Nm):
         m_val = par.grid_m[im]
-
-        # a) consume everything
         c[im] = m_val
-
-        # b) utility
         v[im] = utility.func(c[im], par)

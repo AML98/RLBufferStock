@@ -56,7 +56,6 @@ class BufferStockModelClass(ModelClass):
         self.savefolder = 'saved'
         
         # d. list not-floats for safe type inference
-        # NOTE: Removed 'Np' because we no longer have a p-grid
         self.not_floats = [
             'T','Npsi','Nxi','Nm','Na',
             'do_print','do_simple_w','simT','simN','sim_seed',
@@ -73,7 +72,7 @@ class BufferStockModelClass(ModelClass):
         par = self.par
 
         # a. solution method
-        par.solmethod = 'nvfi'
+        par.solmethod = 'vfi'
         
         # b. horizon
         par.T = 20
@@ -91,7 +90,7 @@ class BufferStockModelClass(ModelClass):
         par.pi = 0.1
         par.mu = 0.5
         
-        # e. grids (removed Np; we only keep Nm and Na)
+        # e. grids
         par.Nm = 600
         par.Na = 800
 
@@ -119,15 +118,12 @@ class BufferStockModelClass(ModelClass):
         par = self.par
 
         # a. normalized states
-        #    we interpret grid_m as the possible values of m_t ( = M_t / p_t )
         par.grid_m = nonlinspace(1e-6,20,par.Nm,1.1)
 
-        # b. post-decision states (still length Na)
-        #    similarly interpret grid_a as a_t ( = A_t / p_t )
+        # b. post-decision states
         par.grid_a = nonlinspace(1e-6,20,par.Na,1.1)
         
         # c. shocks
-        #    same transitory+permanent shock structure, but eventually used in normalized transitions
         shocks = create_PT_shocks(
             par.sigma_psi,par.Npsi,par.sigma_xi,par.Nxi,
             par.pi,par.mu)
@@ -138,7 +134,6 @@ class BufferStockModelClass(ModelClass):
 
     def checksum(self):
         """ print checksum """
-        # c is now shape (T,Nm), so we might do e.g.:
         return np.mean(self.sol.c[0])
 
     #########
@@ -151,11 +146,9 @@ class BufferStockModelClass(ModelClass):
         par = self.par
         sol = self.sol
 
-        # c(t,m) and v(t,m) are now 2D with shape (T, Nm) [no dimension for p]
         sol.c = np.nan*np.ones((par.T, par.Nm))
         sol.v = np.nan*np.zeros((par.T, par.Nm))
 
-        # post-decision objects w(a) and q(a) are now 1D with shape (Na)
         sol.w = np.nan*np.zeros(par.Na)
         sol.q = np.nan*np.zeros(par.Na)
 
@@ -174,9 +167,7 @@ class BufferStockModelClass(ModelClass):
                 
                 # a. last period
                 if t == par.T-1:
-                    
-                    # we will need a last_period.solve() that 
-                    # sets c(t,m) = m, for instance (or some variation).
+    
                     last_period.solve(t,sol,par)
 
                 # b. all other periods
@@ -244,12 +235,10 @@ class BufferStockModelClass(ModelClass):
         par = self.par
         sim = self.sim
 
-        # In normalized form, we store (m_t, a_t, c_t) for each sim
+        # a. grids
         sim.m = np.nan*np.zeros((par.simT,par.simN))
         sim.c = np.nan*np.zeros((par.simT,par.simN))
         sim.a = np.nan*np.zeros((par.simT,par.simN))
-
-        # If you also track p_t in simulation, add sim.p as well:
         sim.p = np.nan*np.zeros((par.simT,par.simN))
 
         # b. draw random shocks
@@ -278,8 +267,7 @@ class BufferStockModelClass(ModelClass):
             sim.psi[:] = par.psi[I]
             sim.xi[:] = par.xi[I]
 
-            # b. run your custom simulate.lifecycle or simulate.infinite, 
-            #    but be sure it updates and uses normalized states.
+            # b. simulate
             simulate.lifecycle(sim,sol,par)
 
         if par.do_print:
@@ -290,7 +278,6 @@ class BufferStockModelClass(ModelClass):
     ########
 
     def consumption_function(self,t=0):
-        # now c[t,:] is purely c(m) in normalized form
         figs.consumption_function(self,t)
 
     def consumption_function_interact(self):

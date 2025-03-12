@@ -1,27 +1,26 @@
 import numpy as np
-
 from base_env import BaseEnv
-
+from consav.quadrature import create_PT_shocks
 
 class BufferStockEnv(BaseEnv):
     """
-    An environment for the buffer stock model
+    An environment for the buffer stock model normalized by permanent income
     """
+
     def __init__(self, state_vars=None, action_vars=None, additional_vars=None, 
-        **kwargs):
+                 **kwargs):
         
         # -----------------------
         # - BaseEnv constructor -
         # -----------------------
 
-        # State vars: permanent income, market resources, and time
+        # State vars: market resources and time
         default_state_vars = [
-            {'name': 'p', 'ini': [0,2], 'low': 0.0, 'high': 100},
             {'name': 'm', 'ini': [0,2], 'low': 0.0, 'high': 100},
             {'name': 't', 'ini': 0.0, 'low': 0.0, 'high': 1.0}
         ]
         
-        # Action var: consumption as share of market resources
+        # Action var: consumption as share of resources
         default_action_vars = [
             {'name': 'c_share', 'low': 0.0, 'high': 1.0}
         ]
@@ -46,24 +45,35 @@ class BufferStockEnv(BaseEnv):
         # --------------------
         # - Model parameters -
         # --------------------
+    
+        self.T = 10                
+        self.beta = 0.96           
+        self.rho = 1.0             
+        self.R = 1.03              
 
-        # Terminal period
-        self.T = 10
-
-        # Preferences
-        self.beta = 0.96
-        self.rho = 1.0
-
-        # Income process
+        # Shock parameters
+        self.Npsi = 6               
+        self.Nxi = 6
         self.sigma_psi = 0.1
         self.sigma_xi = 0.1
         self.pi = 0.1
         self.mu = 0.5
-        self.R = 1.03
+
+        # Utility clip
+        self.u_max = 5
+        self.u_min = -5
 
         # Update attributes with kwargs
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+        # Discretized shock distribution (meshgrid)
+        self.psi, self.psi_w, self.xi, self.xi_w, self.Nshocks = create_PT_shocks(
+            self.sigma_psi, self.Npsi,
+            self.sigma_xi, self.Nxi,
+            self.pi, self.mu
+        )
+        self.shock_probs = self.psi_w * self.xi_w
 
     # ------------------
     # - Public methods -
@@ -71,39 +81,39 @@ class BufferStockEnv(BaseEnv):
 
     def transition(self):
         """
-        Transition function
+        Transition function: updates (P, m, t) to next period's values
         """
-        p = self.p
-        t = self.t
         a = self.a
 
-        # Income and market resources 
-        p_plus = self._compute_p_plus(p)
-        m_plus = self._compute_m_plus(p_plus, a)
+        # Draw shock from the discrete distribution
+        idx = np.random.choice(self.Nshocks, p=self.shock_probs)
+        psi_plus = self.psi[idx]
+        xi_plus = self.xi[idx]
 
-        self.p = p_plus
+        # Market resources
+        m_plus = self.R * a / psi_plus + xi_plus
+
         self.m = m_plus
-        self.t = t + 1 / self.T
+        self.t += 1/(self.T-1)
 
     def compute_reward(self, c_share):
         """
-        Compute utility and reward
+        Compute utility and reward from consumption choice
         """
         m = self.m
 
         # Consumption and assets
-        c = c_share[0] * m
+        c = c_share[0] * m  
         a = m - c
 
         # Utility and reward
         utility = self._compute_utility(c)
-        reward = self._compute_rescaled_utility(c)
-        #reward = np.clip(utility + 3, -5, 5)
+        reward = self._compute_clipped_utility(c)
 
+        # Log variables to the environment
+        self.c_share = c_share
         self.utility = utility
         self.reward = reward
-
-        self.c_share = c_share
         self.c = c
         self.a = a
 
@@ -112,60 +122,42 @@ class BufferStockEnv(BaseEnv):
         Termination function
         """
         self.done = (self.period == self.T)
+
+    def compute_marginal_utility(self, c):
+        """
+        Compute marginal utility of consumption
+        """
+        return c ** (-self.rho)
     
     # -------------------
     # - Private methods -
     # -------------------
     
-    def _compute_p_plus(self, p):
-        """
-        Compute next period p given p and a
-        """
-        psi_plus = np.random.lognormal(mean=-0.5 * self.sigma_psi ** 2, 
-            sigma=self.sigma_psi)
-
-        p_plus = psi_plus * p
-        
-        return p_plus
-    
-    def _compute_m_plus(self, p_plus, a):
-        """
-        Compute next period m given p_plus and a
-        """
-        xi_t1 = np.random.lognormal(mean=-0.5 * self.sigma_xi ** 2, 
-            sigma=self.sigma_xi)
-                
-        if np.random.rand() < self.pi:
-            tilde_xi_t1 = self.mu
-        else:
-            tilde_xi_t1 = (xi_t1 - self.pi * self.mu) / (1 - self.pi)
-
-        m_plus = self.R * a + tilde_xi_t1 * p_plus
-
-        return m_plus
-
     def _compute_utility(self, c):
         """
         CRRA utility function
         """
-        # Add small number to avoid log(0)
         if self.rho == 1.0:
-            utility = np.log(c + 1e-8)
+            return np.log(c + 1e-8)
         else:
-            utility = (c + 1e-8) ** (1 - self.rho) / (1 - self.rho)
+            return (c + 1e-8) ** (1 - self.rho) / (1 - self.rho)
         
-        return utility
+    def _compute_clipped_utility(self, c):
+        """
+        Clip utility to be between -5 and 5
+        """
+        return np.clip(self._compute_utility(c), self.u_min, self.u_max)
     
     def _compute_rescaled_utility(self, c):
-        '''
+        """
         Rescale CRRA utility to be between -1 and 1
-        '''
+        """
         c_min = 0
-        c_max = 10
+        c_max = 2
         u_min = self._compute_utility(c_min)
         u_max = self._compute_utility(c_max)
         
         A = 2 / (u_max - u_min)
         B = -1 - A * u_min
 
-        return A * self._compute_utility(c) + B
+        return np.clip(A * self._compute_utility(c) + B, -1, 1)

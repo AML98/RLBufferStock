@@ -4,9 +4,13 @@ import pandas as pd
 import torch
 import math
 
-# ---------
-# - Plots -
-# ---------
+import seaborn as sns
+
+from consav.grids import nonlinspace
+
+# --------------------
+# - Helper functions -
+# --------------------
 
 def plot_avg_trajectory(agent_dict, var, ax):
     """
@@ -43,7 +47,72 @@ def plot_sd(agent_dict, var, ax):
 
     return line
 
-def plot_fig1(rl_dict, dp_dict, save=None):
+# -----------
+# - Figures -
+# -----------
+
+def plot_fig1(rl_dict, dp_dict, other_dict=None, another_dict=None, save=None, axes=None, add_legend=True):
+    """
+    """
+
+    aspect_ratio = 1
+    base_fig_width = 15
+
+    n_cols = 3
+    n_rows = 1
+
+    fig_height = aspect_ratio * (base_fig_width * n_rows / n_cols)
+    
+    if axes is None:
+        fig, axes = plt.subplots(
+            nrows=n_rows, 
+            ncols=n_cols, 
+            figsize=(base_fig_width, fig_height))
+        
+        axes = axes.flatten()
+
+    else:
+        fig = axes[0].figure
+
+    var_list = ['m', 'c', 'a']
+    var_names = ['Cash-on-hand, $m_t$', 'Consumption, $c_t$', 'Assets, $a_t$']
+
+    # For legend collection
+    lines, labels = [], []
+
+    for i, var in enumerate(var_list):
+        ax = axes[i]
+        ax.set_title(var_names[i])
+
+        for d in [dp_dict, rl_dict, other_dict, another_dict]:    
+            if d is not None:
+                line = plot_avg_trajectory(d, var, ax)
+                if line.get_label() not in labels:
+                    labels.append(line.get_label())
+                    lines.append(line)
+
+    if add_legend:
+        custom_order = [dp_dict['label'], rl_dict['label']]
+
+        custom_lines = [lines[labels.index(lbl)] for lbl in custom_order]
+        custom_labels = custom_order
+
+        fig.legend(
+            custom_lines, 
+            custom_labels, 
+            loc="upper center", 
+            bbox_to_anchor=(0.5, 0.0), 
+            ncol=2, 
+            frameon=False)
+    
+    if axes is None:
+        fig.tight_layout()
+
+    if save is not None:
+        fig.savefig(save, format="pgf", bbox_inches="tight")
+        plt.close(fig)
+
+def plot_fig3(rl_shock_dict, dp_shock_dict, dp_dict, shock_line, save=None, add_legend=True, axes=None):
     """
     """
     # Keep aspect ratio of subplots!
@@ -51,428 +120,441 @@ def plot_fig1(rl_dict, dp_dict, save=None):
     base_fig_width = 15
 
     n_cols = 3
-    n_rows = 2
+    n_rows = 1
 
     fig_height = aspect_ratio * (base_fig_width * n_rows / n_cols)
+    
+    if axes is None:
+        fig, axes = plt.subplots(
+            nrows=n_rows, 
+            ncols=n_cols, 
+            figsize=(base_fig_width, fig_height))
+        
+        axes = axes.flatten()
 
-    fig, axes = plt.subplots(
-        nrows=n_rows,
-        ncols=n_cols,
-        figsize=(base_fig_width, fig_height),
-        squeeze=False
-    )
+    else:
+        fig = axes[0].figure
 
-    axes = axes.flatten()
 
     var_list = ['m', 'c', 'a']
-    var_names = ['$m_t$', '$c_t$', '$a_t$']
+    var_names = ['Cash-on-hand, $m_t$', 'Consumption, $c_t$', 'Assets, $a_t$']
 
     # For legend
     lines, labels = [], []
 
     for i, var in enumerate(var_list):
-        # --- Plot in row 1 ---
         title = var_names[i]
         axes[i].set_title(title)
+        
+        # Shock line
+        axes[i].axvline(
+            x=shock_line, 
+            color='black',
+            linewidth=1.0,
+            linestyle='-',
+            alpha=0.8
+        )
 
-        for d in [rl_dict, dp_dict]:
+        # Average trajectory
+        for d in [dp_dict, dp_shock_dict, rl_shock_dict]:
             line = plot_avg_trajectory(d, var, axes[i])
             if line.get_label() not in labels:
                 labels.append(line.get_label())
                 lines.append(line)
-        
-        # --- Plot in row 2 ---
-        title = f'SD({var_names[i]})'
-        axes[i + n_cols].set_title(title)
 
-        for d in [rl_dict, dp_dict]:
-            line = plot_sd(d, var, axes[i + n_cols])
-            if line.get_label() not in labels:
-                labels.append(line.get_label())
-                lines.append(line)
+    if add_legend:
+        custom_order = [
+            dp_shock_dict['label'],
+            rl_shock_dict['label'],
+            dp_dict['label']
+        ]
 
-    # Legends
-    custom_order = [
-        rl_dict['label'],
-        dp_dict['label']
-    ]
+        custom_lines = [lines[labels.index(lbl)] for lbl in custom_order]
+        custom_labels = custom_order
 
-    custom_lines = [lines[labels.index(lbl)] for lbl in custom_order]
-    custom_labels = [lbl for lbl in custom_order]
-
-    fig.legend(custom_lines, custom_labels, loc="upper center", 
-            bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False)
-
-    plt.tight_layout()
+        fig.legend(
+            custom_lines, 
+            custom_labels, 
+            loc="upper center", 
+            bbox_to_anchor=(0.5, 0.0), 
+            ncol=2, 
+            frameon=False)
+    
+    if axes is None:
+        fig.tight_layout()
 
     if save is not None:
         fig.savefig(save, format="pgf", bbox_inches="tight")
-        plt.close()
-    else:
-        plt.show()
+        plt.close(fig)
 
-def plot_fig2(rl_shock_dict, rl_dict, dp_shock_dict, dp_dict, var_list, shock_line, save=None):
+def plot_policy(rl_policy_dict, dp_policy_dict, T, R, dp_policy_base_dict=None, another_policy_dict=None,
+                periods=[0,10,19], shift=0, exp_m=False, save=None, axes=None, add_legend=True):
     """
-    Plots trajectories for the given dictionaries and variables in a
-    fixed 2-row layout (shock row vs normal row), and a dynamic number
-    of columns = len(var_list), while preserving the SAME subplot aspect ratio.
     """
-    # Keep aspect ratio of subplots!
+
     aspect_ratio = 1
     base_fig_width = 15
 
-    n_cols = len(var_list)
-    n_rows = 2
+    n_cols = 3
+    n_rows = 1
 
     fig_height = aspect_ratio * (base_fig_width * n_rows / n_cols)
+    
+    if axes is None:
+        fig, axes = plt.subplots(
+            nrows=n_rows, 
+            ncols=n_cols, 
+            figsize=(base_fig_width, fig_height))
+        
+        axes = axes.flatten()
 
-    fig, axes = plt.subplots(
-        nrows=n_rows,
-        ncols=n_cols,
-        figsize=(base_fig_width, fig_height),
-        squeeze=False
-    )
+    else:
+        fig = axes[0].figure
 
-    axes = axes.flatten()
+    m_min = 0
+    m_max = 5
+    ms = nonlinspace(1e-6, 20, 600, 1.1)
+    m_unchanged = (1 + ms*(R-1)) / R
 
-    row_1_dicts = [rl_shock_dict, dp_shock_dict, dp_dict]
-    row_2_dicts = [rl_shock_dict, rl_dict]
-
-    # For legend
     lines, labels = [], []
 
-    for i, var in enumerate(var_list):
-        # --- Plot in row 1 ---
-        ax1 = axes[i]  # first row = 0, columns go i=0..n_cols-1
-        ax1.axvline(x=shock_line, color='black', linewidth=1)
-        ax1.set_ylim(bottom=0, top=10)
-        ax1.set_title(f'${var}_t$')
+    # List of agent dictionaries to loop over
+    agent_dicts = ([dp_policy_dict, rl_policy_dict]
+                   if dp_policy_base_dict is None 
+                   else [dp_policy_dict, dp_policy_base_dict, rl_policy_dict])
+    
+    agent_dicts = agent_dicts if another_policy_dict is None else agent_dicts + [another_policy_dict]
+    
+    for j, p in enumerate(periods):
+        cs = np.zeros(len(ms))
+        ax = axes[j]
+        t = p/(T-1)
 
-        for d in row_1_dicts:
-            line = plot_avg_trajectory(d, var, ax1)
-            if line.get_label() not in labels:
-                labels.append(line.get_label())
-                lines.append(line)
+        # 45-degree line
+        line, = ax.plot(ms, ms, color="black", linestyle="-", linewidth=1.0,
+                        alpha=0.5)
+        if line.get_label() not in labels:
+            lines.append(line)
 
-        # --- Plot in row 2 ---
-        ax2 = axes[i + n_cols]  # second row = 1, same col i => i + n_cols
-        ax2.axvline(x=shock_line, color='black', linewidth=1)
-        ax2.set_ylim(bottom=0, top=10)
-        ax2.set_title(f'${var}_t$')
-
-        for d in row_2_dicts:
-            line = plot_avg_trajectory(d, var, ax2)
-            if line.get_label() not in labels:
-                labels.append(line.get_label())
-                lines.append(line)
-
-    # Legends
-    custom_order = [
-        rl_dict['label'],
-        rl_shock_dict['label'], 
-        dp_dict['label'],
-        dp_shock_dict['label']
-    ]
-
-    custom_lines = [lines[labels.index(lbl)] for lbl in custom_order]
-    custom_labels = [lbl for lbl in custom_order]
-
-    fig.legend(custom_lines, custom_labels, loc="upper center", 
-            bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False)
-
-    plt.tight_layout()
-
-    if save is not None:
-        fig.savefig(save, format="pgf", bbox_inches="tight")
-        plt.close()
-    else:
-        plt.show()
-
-def plot_fig3(rl_shock_dict, rl_dict, dp_shock_dict, dp_dict, var_list, shock_line, save=None):
-    """
-    """
-    # Keep aspect ratio of subplots!
-    aspect_ratio = 1
-    base_fig_width = 15
-
-    n_cols = len(var_list)
-    n_rows = 2
-
-    fig_height = aspect_ratio * (base_fig_width * n_rows / n_cols)
-
-    fig, axes = plt.subplots(
-        nrows=n_rows,
-        ncols=n_cols,
-        figsize=(base_fig_width, fig_height),
-        squeeze=False
-    )
-
-    axes = axes.flatten()
-
-    row_1_dicts = [rl_shock_dict, dp_shock_dict, dp_dict]
-    row_2_dicts = [rl_shock_dict, rl_dict]
-
-    # Containers to use for legend
-    labels = []
-    lines = []
-
-    for i in range(len(var_list)):
-        if var_list[i] == 'c':
-            title = 'SD$(c_t)^2$'
-            bottom = None
-            top = None
-            plot_func = plot_sd
+        # m distribution
+        if another_policy_dict is not None:
+            dicts = [dp_policy_dict, rl_policy_dict, another_policy_dict]
         else:
-            title = f'${var_list[i]}_t$'
-            bottom = 0
-            top = 3
-            plot_func = plot_avg_trajectory
+            dicts = [dp_policy_dict, rl_policy_dict]
 
-        # Plot row 1
-        axes[i].axvline(x=shock_line, color='black', linewidth=1)
-        axes[i].set_ylim(bottom=bottom, top=top)
-        axes[i].set_title(title)
+        for d in dicts:
+            if d == rl_policy_dict or d == another_policy_dict:
+                alpha = 0.5
+            else:
+                alpha = 0.25
 
-        for j in range(len(row_1_dicts)):
-            line = plot_func(row_1_dicts[j], var_list[i], axes[i])
+            bin_width = 0.25
+            bin_edges = np.arange(d['agent'].history.m[:, p].min(), 
+                                d['agent'].history.m[:, p].max() + bin_width, 
+                                bin_width)
+
+            hist, _, _ = ax.hist(
+                d['agent'].history.m[:, p],
+                bins=bin_edges,
+                density=True,
+                color=d['color'],
+                edgecolor=None,
+                alpha=alpha
+            )
+
+        # E(change in m) = 0 line
+        if exp_m == True:
+            line, = ax.plot(ms, m_unchanged, color="green", linestyle="-", linewidth=1.0,
+                            alpha=0.8, label="E($\\Delta m_{t+1}$) = 0")
             if line.get_label() not in labels:
                 labels.append(line.get_label())
                 lines.append(line)
 
-        # Plot row 2
-        index = i + len(var_list)
-        axes[index].axvline(x=shock_line, color='black', linewidth=1)
-        axes[index].set_ylim(bottom=bottom, top=top)
-        axes[index].set_title(title)
-
-        for j in range(len(row_2_dicts)):
-            line = plot_func(row_2_dicts[j], var_list[i], axes[index])
-            if line.get_label() not in labels:
-                labels.append(line.get_label())
-                lines.append(line)
-
-    fig.legend(lines, labels, loc="upper center", 
-        bbox_to_anchor=(0.5, 0.0), ncol=len(var_list), frameon=False)
-
-    plt.tight_layout()
-
-    if save is not None:
-        fig.savefig(save, format="pgf", bbox_inches="tight")
-        plt.close()
-    else:
-        plt.show()
-
-def plot_avg_trajectories_separate2(*agent_dicts, var_list, shock_line=None,
-    save=None):
-    """
-    """
-
-    # Subplot structure
-    num_cols = 2
-    num_plots = len(var_list)
-    num_rows = num_plots // num_cols + num_plots % num_cols
-    fig, axes = plt.subplots(num_rows, num_cols, 
-        figsize=(15, 5 * num_rows))
-    axes = axes.flatten()
-
-    # Containers to use for legend
-    lines = []
-    labels = []
-
-    for i in range(len(var_list)):
-        var = var_list[i]
-        ax = axes[i]
-
+        # Plot the agent policies
         for agent_dict in agent_dicts:
-            # Data
-            history = agent_dict['history']
-
-            # Layout
-            label = agent_dict['label']
+            agent = agent_dict['agent']
             color = agent_dict['color']
             linestyle = agent_dict['linestyle']
             linewidth = agent_dict['linewidth']
-            linestart = agent_dict['linestart']
-            cf_start = agent_dict['cf_start']
+            label = agent_dict['label']
+            alpha = agent_dict['alpha']
 
-            if 'alpha' in agent_dict:
-                alpha = agent_dict['alpha']
-            else:
-                alpha = 1.0
+            if agent_dict == dp_policy_base_dict:
+                shift = 0
 
-            # Plot
-            line = history.plot_avg_trajectory2(var, color=color,
-                linestyle=linestyle, linewidth=linewidth, 
-                linestart=linestart, cf_start=cf_start, 
-                label=label, alpha=alpha, ax=ax)
+            # Compute policy for each m in ms
+            for i, m in enumerate(ms):
+                state = np.array([m, t])
+                c_share = agent.select_action(state, noise=False, shift=shift)
+                c = c_share * m
+                cs[i] = c
 
-            # Add only for 1st var to avoid duplicate legends
-            if i == 0:
+            line, = ax.plot(ms, cs, color=color, label=label, linestyle=linestyle,
+                            linewidth=linewidth, alpha=alpha)
+            if line.get_label() not in labels:
+                labels.append(line.get_label())
                 lines.append(line)
-                labels.append(label)
 
-        ax.set_title(f'${var}_t$')
-        ax.set_ylim(bottom=0, top=3)
+        # Axis formatting for this subplot
+        ax.set_title(f'Policy at $t={p}$')
+        ax.set_xticks(np.arange(m_max+0.5, step=1.0))
+        ax.set_ylim(bottom=m_min, top=(m_max if p==19 else m_max-2))
+        ax.set_xlim(left=m_min, right=m_max)
+        ax.set_xlabel('Cash-on-hand, $m_{t}$')
 
-        # Shock line
-        if shock_line is not None:
-            ax.axvline(x=shock_line, color='black', linewidth=1)
+    if exp_m == True:
+        custom_order = [
+            dp_policy_dict['label'], 
+            rl_policy_dict['label'],
+            "E($\\Delta m_{t+1}$) = 0", 
+            "c_t = m_t"]
+    else:
+        custom_order = [
+            dp_policy_dict['label'], 
+            rl_policy_dict['label'],
+            "c_t = m_t"]
 
-    fig.legend(lines, labels, loc="upper center", 
-        bbox_to_anchor=(0.5, 0.0), ncol=len(var_list), frameon=False)
+    if add_legend: 
+        custom_lines = [lines[labels.index(lbl)] for lbl in custom_order if lbl in labels]
+        custom_labels = [lbl for lbl in custom_order if lbl in labels]
 
-    # Hide any unused subplots
-    for i in range(len(var_list), len(axes)):
-        fig.delaxes(axes[i])
-
-    plt.tight_layout()
+        fig.legend(
+            custom_lines, 
+            custom_labels, 
+            ncol=2, 
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.0), 
+            frameon=False)
+    
+    if axes is None:
+        fig.tight_layout()
 
     if save is not None:
         fig.savefig(save, format="pgf", bbox_inches="tight")
-        plt.close()
-    else:
-        plt.show()
+        plt.close(fig)
 
-def plot_avg_trajectories_together(*items, var_list, con_bands=True,
-    start_period1=0, start_period2=0, save=None):
+def plot_learning(dp_dict, rl_dicts, n_episodes, save=None):
     """
-    Plot average trajectories of multiple variables in same plot.
-
-    Parameters
-    ----------
-    items : tuple
-        A collection of items containing trajectory data. Each item 
-        should have a `history` attribute or be a 'history' object.
-        Variables will be plotted for each item.  
-    
-    var_list : list of str
-        A list of variable names to plot.
-    
-    con_bands : bool, optional
-        If True, includes confidence bands in the plots.
-    
-    start_period : int, optional
-        The period from which to start plotting confidence band of
-        the second item in each subplot. The first item is always
-        plotted from the beginning.
-    
-    save : bool, optional
-        If True, saves the plot as a `.pgf` file named 
-        "plot_trajectories.pgf" in the current directory.
     """
-    fig, ax = plt.subplots(figsize=(7.5, 5))
-    
-    # Linestyles to differentiate between items
-    linestyles = ['-', '--']
 
-    # Colors to differentiate between vars
-    colors = ['blue', 'red', 'black']
+    # Keep aspect ratio of subplots!
+    aspect_ratio = 1
+    base_fig_width = 15
 
-    # Containers to use for legend
-    lines = []
+    n_cols = 3
+    n_rows = 1
+
+    fig_height = aspect_ratio * (base_fig_width * n_rows / n_cols)
+
+    fig, axes = plt.subplots(
+        nrows=n_rows,
+        ncols=n_cols,
+        figsize=(base_fig_width, fig_height),
+        squeeze=False
+    )
+
+    axes = axes.flatten()
+
     labels = []
+    lines = []
 
-    for i in range(len(var_list)):
-        var = var_list[i]
-        color = colors[i]
-
-        for j in range(len(items)):
-            linestyle = linestyles[j]
-            item = items[j]
-
-            history = item.history if hasattr(item, 'history') else item
-
-            # If 1st item, plot con_band from initial period
-            if j == 0:
-                line = history.plot_avg_trajectory(var, color=color,
-                    linestyle=linestyle, con_bands=con_bands, 
-                    var_legends=True, ax=ax, start_period=
-                    start_period1)
-            
-            # If 2nd item, plot con_band from specified start period
-            else:
-                line = history.plot_avg_trajectory(var, color=color, 
-                    linestyle=linestyle, con_bands=con_bands,
-                    var_legends=True, ax=ax, start_period=
-                    start_period2)
-
-            lines.append(line)
-            labels.append(f'${var}_t$, {history.name}')
-
-        if start_period2 != 0:
-            ax.axvline(x=start_period2, color='black', linewidth=1)
-
-    fig.legend(lines, labels, loc="upper center", bbox_to_anchor=(0.5, 0.0),
-        ncol=len(var_list), frameon=False)
+    # RL learning vars
+    vars = ['c_loss', 'a_loss', 'euler_error']
+    vars_names = ['Value loss', 'Policy loss', 'Relative Euler errors']
+    
+    for i in range(len(vars)):
         
-    plt.tight_layout()
+        axes[i].set_title(vars_names[i])
+
+        if vars[i] != 'm_dist':
+            x_axis = np.arange(n_episodes)
+            axes[i].set_xticks(np.arange(n_episodes, step=500))
+            axes[i].set_xlim([0, n_episodes])
+            axes[i].set_xlabel('Life cycles')
+        if vars[i] == 'c_loss':
+            axes[i].set_xlim([0, 501])
+            axes[i].set_xticks(np.arange(n_episodes, step=100))
+        else:
+            axes[i].set_xlabel("Cash-on-hand, $m_t$")
+
+        # DP value            
+        if vars[i] == 'value':
+            dp_value = dp_dict['value']
+            dp_value = np.ones_like(x_axis) * dp_value.mean(axis=0)
+
+            line_dp, = axes[i].plot(
+                x_axis,
+                dp_value,
+                linewidth=dp_dict['linewidth'],
+                linestyle=dp_dict['linestyle'],
+                label=dp_dict['label'], 
+                color=dp_dict['color']
+            )
+            
+            if line_dp.get_label() not in labels:
+                labels.append(line_dp.get_label())
+                lines.append(line_dp)
+
+        # RL vars
+        for rl_dict in rl_dicts:
+            
+            var = rl_dict[vars[i]]
+
+            # Everything else but m_dist
+            if vars[i] != 'm_dist':
+                line_rl, = axes[i].plot(
+                    x_axis,
+                    var,
+                    linestyle='-',
+                    linewidth=rl_dict['linewidth'],
+                    color=rl_dict['color'],
+                    label=rl_dict['label'],
+                    alpha=0.8
+                )
+
+                if line_rl.get_label() not in labels:
+                    labels.append(line_rl.get_label())
+                    lines.append(line_rl)
+
+            # m_dist
+            else:
+                line_rl, _, _ = axes[i].hist(
+                    var, 
+                    bins=30,
+                    density=True,
+                    color=rl_dict['color'], 
+                    alpha=0.5,
+                    edgecolor=None
+                )
+
+    all_labels = [dp_dict['label']] + [rl['label'] for rl in rl_dicts]
+    custom_order = sorted(all_labels)
+
+    custom_lines = [lines[labels.index(lbl)] for lbl in custom_order if lbl in labels]
+    custom_labels = [lbl for lbl in custom_order if lbl in labels]
+
+    fig.legend(
+        custom_lines, 
+        custom_labels, 
+        ncol=4, 
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.0), 
+        frameon=False)
+
+    fig.tight_layout()
+    fig.savefig(save, format="pgf", bbox_inches="tight")
+    plt.close(fig)
+
+def plot_fig1_policy(rl_dict, dp_dict, rl_policy_dict, dp_policy_dict, T, R, exp_m=False,
+                     other_dict=None, other_policy_dict=None, 
+                     another_dict=None, another_policy_dict=None,
+                     periods=[0,10,19], save=None, use_master_legend=True):
+    """
+    """
+
+    subplot_width = 5    # inches
+    subplot_height = 5   # inches
+    total_width = 3 * subplot_width    # 15 inches wide (3 columns)
+    total_height = 2 * subplot_height    # 10 inches tall (2 rows)
+
+    fig = plt.figure(figsize=(total_width, total_height))
+    gs = fig.add_gridspec(nrows=2, ncols=1, height_ratios=[subplot_height, subplot_height], hspace=0.3)
+
+    gs_top = gs[0].subgridspec(nrows=1, ncols=3, wspace=0.25, hspace=0.4)
+    axes_fig1 = [fig.add_subplot(gs_top[0, i]) for i in range(3)]
+
+    gs_bottom = gs[1].subgridspec(nrows=1, ncols=3, wspace=0.25, hspace=0.4)
+    axes_policy = [fig.add_subplot(gs_bottom[0, i]) for i in range(3)]
+
+    plot_fig1(rl_dict, dp_dict, other_dict=other_dict, another_dict=another_dict, save=None, axes=axes_fig1, add_legend=not use_master_legend)
+    plot_policy(rl_policy_dict, dp_policy_dict, T, R, exp_m=exp_m, dp_policy_base_dict=other_policy_dict, another_policy_dict=another_policy_dict, periods=periods, save=None, axes=axes_policy, add_legend=not use_master_legend)
+
+    if use_master_legend:
+        all_handles = []
+        all_labels = []
+        for ax in axes_fig1 + axes_policy:
+            handles, labels = ax.get_legend_handles_labels()
+            all_handles.extend(handles)
+            all_labels.extend(labels)
+
+        unique = {}
+        for handle, label in zip(all_handles, all_labels):
+            if label not in unique:
+                unique[label] = handle
+        master_handles = list(unique.values())
+        master_labels = list(unique.keys())
+
+        sorted_legend = sorted(zip(master_labels, master_handles), key=lambda x: x[0])
+        master_labels, master_handles = zip(*sorted_legend)
+
+        fig.legend(
+            master_handles, 
+            master_labels, 
+            loc="lower center", 
+            bbox_to_anchor=(0.5, -0.075),
+            ncol=len(master_handles),
+            frameon=False)
 
     if save is not None:
         fig.savefig(save, format="pgf", bbox_inches="tight")
-        plt.close()
+        plt.close(fig)
+
     else:
         plt.show()
 
-def plot_value(*history_managers, mean1=False, mean2=False,
-    window_size=None, save=None):
+def plot_fig3_policy(rl_shock_dict, dp_shock_dict, dp_dict, rl_policy_dict, dp_policy_dict, shock_period,
+                     T, R, periods=[5,10,19], save=None, use_master_legend=True, shift=0):
     """
-    Plot the life-time utility averaged across training runs.
     """
-    fig, ax = plt.subplots(figsize=(7.5, 5))
 
-    # Colors to differentiate between histories
-    colors = ['blue', 'red', 'green']
+    subplot_width = 5    # inches
+    subplot_height = 5   # inches
+    total_width = 3 * subplot_width    # 15 inches wide (3 columns)
+    total_height = 2 * subplot_height    # 10 inches tall (2 rows)
 
-    for i, history_man in enumerate(history_managers):
-        color = colors[i]
-        if i == 1 and mean1:
-            line = history_man.plot_average_value(color=color, 
-                linestyle='--', mean=mean1, window_size=window_size,
-                ax=ax)
-        elif i == 2 and mean2:
-            line = history_man.plot_average_value(color=color, 
-                linestyle='--', mean=mean2, window_size=window_size,
-                ax=ax)
-        else:
-            line = history_man.plot_average_value(color=color, 
-                linestyle='-', window_size=window_size,
-                ax=ax)
+    fig = plt.figure(figsize=(total_width, total_height))
+    gs = fig.add_gridspec(nrows=2, ncols=1, height_ratios=[subplot_height, subplot_height], hspace=0.3)
 
-    plt.tight_layout()
+    gs_top = gs[0].subgridspec(nrows=1, ncols=3, wspace=0.25, hspace=0.4)
+    axes_fig1 = [fig.add_subplot(gs_top[0, i]) for i in range(3)]
+
+    gs_bottom = gs[1].subgridspec(nrows=1, ncols=3, wspace=0.25, hspace=0.4)
+    axes_policy = [fig.add_subplot(gs_bottom[0, i]) for i in range(3)]
+
+    plot_fig3(rl_shock_dict, dp_shock_dict, dp_dict, shock_period, save=None, axes=axes_fig1, add_legend=not use_master_legend)
+    plot_policy(rl_policy_dict, dp_policy_dict, T, R, periods=periods, shift=shift, save=None, axes=axes_policy, add_legend=not use_master_legend)
+
+    if use_master_legend:
+        all_handles = []
+        all_labels = []
+        for ax in axes_fig1 + axes_policy:
+            handles, labels = ax.get_legend_handles_labels()
+            all_handles.extend(handles)
+            all_labels.extend(labels)
+
+        unique = {}
+        for handle, label in zip(all_handles, all_labels):
+            if label not in unique:
+                unique[label] = handle
+        master_handles = list(unique.values())
+        master_labels = list(unique.keys())
+
+        sorted_legend = sorted(zip(master_labels, master_handles), key=lambda x: x[0])
+        master_labels, master_handles = zip(*sorted_legend)
+
+        fig.legend(
+            master_handles, 
+            master_labels, 
+            loc="lower center", 
+            bbox_to_anchor=(0.5, -0.075),
+            ncol=len(master_handles), 
+            frameon=False)
 
     if save is not None:
         fig.savefig(save, format="pgf", bbox_inches="tight")
         plt.close(fig)
     else:
         plt.show()
-
-def plot_policy(*agents):
-    """
-    Plot the policy of the agent.
-    """
-    
-    # Only for buffer stock environment 
-    ps = np.linspace(0.1, 2, 5)
-    ms = np.linspace(0.1, 2, 100)
-
-    for agent in agents:
-        cs = np.zeros((len(ps), len(ms)))
-
-        for i,p in enumerate(ps):
-            for j,m in enumerate(ms):
-                # Get state
-                state = np.array([p,m,0.0])
-                
-                # Calculate consumption
-                c_share = agent.select_action(state, noise=False, shift=0)
-                c = c_share * m
-                cs[i,j] = c                    
-    
-        for i in range(len(ps)):
-            plt.plot(ms, cs[i,:], label=f'{agent}')
-            plt.ylabel('Consumption')
-            plt.xlabel('Wealth')
-            plt.savefig(f'plots/policy_{agent}.png', format='png')
 
 # ----------
 # - Prints -
@@ -494,169 +576,144 @@ def print_avg_values(*agents, var_list):
 
         print('')
 
-import numpy as np
-import pandas as pd
+# ----------
+# - Tables -
+# ----------
 
-def generate_avg_values_table(*agents, var_list, label="tab:avg_values",
-    caption="Average Values and Standard Deviations"):
+def extract_metrics(agent, metrics):
     """
     """
-    data = {}
-    for agent in agents:
-        agent_name = agent.history.name
-        data[(agent_name, 'Average')] = []
-        data[(agent_name, 'Standard deviation')] = []
+    results = {}
 
-    for var in var_list:
-        for agent in agents:
-            agent_name = agent.history.name
-            values = getattr(agent.history, var)
-            avg = np.mean(values)
-            std = np.std(values)
-            data[(agent_name, 'Average')].append(avg)
-            data[(agent_name, 'Standard deviation')].append(std)
+    for metric in metrics:
+        data = getattr(agent.history, metric)
+        
+        results[f'avg_{metric}'] = np.nanmean(data)
+        results[f'p5_{metric}'] = np.nanpercentile(data, 5)
+        results[f'p95_{metric}'] = np.nanpercentile(data, 95)
+        results[f'std_{metric}'] = np.nanstd(data)
+        if metric == 'a':
+            results[f'last_{metric}'] = np.mean(data[:,-1])
 
-    columns = pd.MultiIndex.from_tuples(data.keys(), names=['Agent', 
-        'Statistic'])
-    df = pd.DataFrame(data, index=var_list, columns=columns)
-    df.index.name = 'Variable'
-    df = df.round(2)
+    return results
 
-    # Generate LaTeX table
-    latex_table = df.to_latex(column_format='l' + 'r' * len(df.columns),
-        multirow=True, caption=caption, label=label, escape=False,
-        float_format="%.2f")
-
-    print(latex_table)
-
-# ------------------------------
-# - Consumption function stuff -
-# ------------------------------
-
-def plot_consumption_function(agent_dict, t, ax=None,
-                              marker='o', alpha=0.3,
-                              do_sort=True, do_bin=False, bins=20):
+def extract_all_metrics(shocks, metrics):
     """
-    Plots the consumption function for a single period t, i.e. c_t vs (m_t/p_t),
-    for the given agent_dict on a specified Matplotlib Axes (ax).
-    
-    Parameters
-    ----------
-    agent_dict : dict
-        A dictionary containing at least:
-          - 'history': a History object with .plot_consumption_vs_mOverp_by_t()
-          - 'label': a string label (optional)
-          - 'color': a color (optional)
-          - etc.
-    t : int
-        The period (in a finite-horizon model) at which to plot the policy.
-    ax : matplotlib.axes.Axes, optional
-        The axes on which to plot. If None, uses current axis.
-    marker, alpha, do_sort, do_bin, bins
-        Passed along to the History.plot_consumption_vs_mOverp_by_t method.
-    
-    Returns
-    -------
-    ax : matplotlib.axes.Axes
-        The axis used for plotting.
     """
-    if ax is None:
-        ax = plt.gca()
-    
-    history = agent_dict['history']
-    label   = agent_dict['label']
-    color   = agent_dict['color']
+    results = {}
 
-    # Actually call the method from the History object:
-    ax = history.plot_consumption_vs_wealth_by_t(
-        t=t,
-        ax=ax,
-        marker=marker,
-        alpha=alpha,
-        do_sort=do_sort,
-        do_bin=do_bin,
-        bins=bins
+    for shock_name, agents in shocks.items():
+        results[shock_name] = {
+            agent.name: extract_metrics(agent, metrics) 
+            for agent in agents
+        }
+
+    return results
+
+def create_generalized_table(results, params):
+    """
+    """
+    shocks = [shock for shock in results.keys() if shock != "baseline"]
+    baseline = results.get("baseline", {})
+    baseline_agents = baseline.keys()
+    shock_agents = {
+        agent for shock in shocks 
+        for agent in results[shock].keys() 
+        if agent != "HTM"
+    }
+
+    def format_shock_name(shock_name):
+        param, value = shock_name.split("=")
+        pretty_name = params[param][1]
+        if shock_name == "baseline":
+            return "Baseline"
+        return f"${pretty_name} = {value}$"
+
+    lines = []
+    lines.append("{\\small")
+
+    # Header: Shock labels
+    total_cols = len(baseline_agents) + len(shock_agents) * len(shocks)
+    lines.append(
+        "\\begin{tabular}{" + "l" + "c" * total_cols + "}"
+    )
+    lines.append("\\hline")
+    lines.append(
+        " & \\multicolumn{" + f"{len(baseline_agents)}" + 
+        "}{c}{Baseline} & " +
+        " & ".join(
+            f"\\multicolumn{{{len(shock_agents)}}}{{c}}"
+            f"{{{format_shock_name(shock)}}}" 
+            for shock in shocks
+        ) +
+        " \\\\ \\hline"
     )
 
-    # You can optionally add a small text label in the subplot:
-    ax.text(0.05, 0.95, label, transform=ax.transAxes, 
-            verticalalignment='top', color=color, fontsize=10)
-
-    return ax
-
-def plot_consumption_functions_subplots(
-    t,
-    agent_dicts,
-    ncols=2,
-    do_bin=False,
-    bins=10,
-    marker='o',
-    alpha=0.3,
-    do_sort=False,
-    save=None
-):
-    """
-    Create a figure of subplots, each showing the consumption function c_t vs.
-    (m_t / p_t) at time t for a different agent.
-
-    Parameters
-    ----------
-    t : int
-        The time/period (in finite horizon) for which to plot c_t.
-    agent_dicts : list of dict
-        Each dict should have:
-          - 'history': a History object with method plot_consumption_vs_mOverp_by_t
-          - 'label': string label
-          - 'color': optional color, etc.
-    ncols : int
-        Number of columns in the subplot grid. Rows will be computed automatically.
-    do_bin, bins, marker, alpha, do_sort
-        Passed to plot_consumption_function (controls binning, alpha, etc.).
-    shock_line : float or int, optional
-        If provided, a vertical line is drawn at x=shock_line in each subplot.
-        (Sometimes used if x has a special meaning.)
-    save : str or None
-        If a filename (e.g. "my_plot.png" or "my_plot.pgf") is provided,
-        saves the figure to that file. Otherwise displays on screen.
-    """
-    n_agents = len(agent_dicts)
-    nrows = math.ceil(n_agents / ncols)
-
-    # Set up a figure with enough subplots
-    fig, axes = plt.subplots(
-        nrows=nrows, ncols=ncols,
-        figsize=(5.0 * ncols, 4.0 * nrows),  # adjust as you like
-        squeeze=False
+    # Header: Agent labels
+    lines.append(
+        " & " + " & ".join(baseline_agents) + " & " +
+        " & ".join(" & ".join(shock_agents) for _ in shocks) +
+        " \\\\ \\hline"
     )
-    axes = axes.flatten()  # Flatten for easy iteration
 
-    for i, agent in enumerate(agent_dicts):
-        ax = axes[i]
+    # Define metrics and their labels
+    metric_labels = {
+        "c": "\\textbf{Consumption}",
+        "a": "\\textbf{Assets}",
+        "m": "\\textbf{Cash-on-hand}",
+        "value": "\\textbf{Life-time utility}",
+        "trans_euler_error": "\\textbf{Relative Euler errors}",
+        "constrained": "\\textbf{Share of constrained HHs}"
+    }
 
-        # Plot consumption vs. m/p for this agent on this subplot
-        plot_consumption_function(
-            agent_dict=agent,
-            t=t,
-            ax=ax,
-            marker=marker,
-            alpha=alpha,
-            do_sort=do_sort,
-            do_bin=do_bin,
-            bins=bins
-        )
+    stat_labels = {
+        "avg": "Average",
+        "p5": "5th percentile",
+        "p95": "95th percentile",
+        "std": "Standard deviation",
+        'last': "Average last period"
+    }
 
-        # Title: let's put the agent's label
-        label = agent.get('label', f"Agent {i}")
-        ax.set_title(f"{label}: consumption at t={t}")
+    # Add grouped rows for metrics
+    for metric, metric_label in metric_labels.items():
+        
+        # Add metric group header
+        lines.append(f"\\text{{{metric_label}}} & " + " & ".join([""] * total_cols) + " \\\\")
+        
+        # Add sub-rows for statistics
+        for stat, stat_label in stat_labels.items():
+            
+            row = f"{stat_label}"
 
-    # Hide unused axes if the # of agents doesn't fill the grid
-    for j in range(i+1, len(axes)):
-        fig.delaxes(axes[j])
+            disregard_a = stat == "last" and metric != "a"
+            disregard_con = stat == "p5" and metric == "constrained"
 
-    plt.tight_layout()
+            if disregard_a or disregard_con:
+                break
+            
+            for agent in baseline_agents:
+                value = baseline.get(agent, {}).get(f"{stat}_{metric}", "N/A")
+                row += (
+                    f" & {value:.2f}" 
+                    if isinstance(value, (int, float)) else 
+                    f" & {value}"
+                )
+            
+            for shock in shocks:
+                for agent in shock_agents:
+                    value = results[shock].get(agent, {}).get(f"{stat}_{metric}", "N/A")
+                    row += (
+                        f" & {value:.2f}" 
+                        if isinstance(value, (int, float)) else 
+                        f" & {value}"
+                    )
+            
+            row += " \\\\"
+            lines.append(row)
 
-    if save is not None:
-        fig.savefig(save, format='png', bbox_inches="tight")
-        plt.close(fig)
-    else:
-        plt.show()
+    # Footer
+    lines.append("\\hline")
+    lines.append("\\end{tabular}")
+    lines.append("}")
+
+    return "\n".join(lines)

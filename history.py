@@ -2,6 +2,7 @@ import os
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
+import warnings
 
 
 class History:
@@ -29,12 +30,8 @@ class History:
 
         for var in self.custom_vars:
             setattr(self, var['name'], np.zeros(var['shape']))
-        
-    # ------------------
-    # - Public methods -
-    # ------------------
 
-    def record_step(self, env, episode):
+    def record_step(self, env, episode, agent, shift=0):
         """
         Record a single interaction at a specific step.
         """
@@ -47,7 +44,7 @@ class History:
 
         for var in self.custom_vars:
             func = var['function']
-            value = func(self, env, episode)
+            value = func(self, env, episode, agent, shift=shift)
 
             if len(var['shape']) != 1:
                 getattr(self, var['name'])[episode, period] = value
@@ -55,93 +52,6 @@ class History:
             elif env.period == env.T-1:
                 getattr(self, var['name'])[episode] = value
     
-    def plot_avg_trajectory2(self, var, color, linestyle, linewidth,
-        linestart, cf_start, label, alpha=1.0, ax=None):
-        """
-        """
-
-        # Use the provided axis or get the current axis
-        if ax is None:
-            ax = plt.gca()
-
-        # Layout
-        num_periods = getattr(self, var).shape[1]  # Shape[1] = T
-        ax.set_xticks(np.arange(num_periods, step=2))
-        ax.set_xlim([0, num_periods-1])
-        ax.set_xlabel('$t$')
-
-        # Get data
-        data = getattr(self, var)
-        var_std = np.std(data, axis=0)
-        var_avg = np.mean(data, axis=0)
-        x_axis = np.arange(num_periods)
-
-        # Plot average trajectory
-        line, = ax.plot(x_axis[linestart:], var_avg[linestart:], 
-            label=label, color=color, linestyle=linestyle,
-            linewidth=linewidth, alpha=alpha)
-            
-        # Plot confidence band
-        if cf_start is not None:
-            upper = var_avg + var_std
-            lower = var_avg - var_std
-            x_axis = x_axis
-
-            ax.fill_between(x_axis[cf_start:], lower[cf_start:], 
-                upper[cf_start:], color=color, alpha=0.2)
-            
-        return line    
-
-    def plot_sd2(self, var, color, linestyle, linewidth,
-        linestart, label, alpha=1.0, ax=None):
-        """
-        """
-
-        # Use the provided axis or get the current axis
-        if ax is None:
-            ax = plt.gca()
-
-        # Layout
-        num_periods = getattr(self, var).shape[1]  # Shape[1] = T
-        ax.set_xticks(np.arange(num_periods, step=2))
-        ax.set_xlim([0, num_periods-1])
-        ax.set_xlabel('$t$')
-
-        # Get data
-        data = getattr(self, var)
-        var_std = np.std(data, axis=0)
-        x_axis = np.arange(num_periods)
-
-        # Plot average trajectory
-        line, = ax.plot(x_axis[linestart:], var_std[linestart:], 
-            label=label, color=color, linestyle=linestyle,
-            linewidth=linewidth, alpha=alpha)
-            
-        return line      
-    
-    def plot_value(self, color, linestyle, ax=None):
-        """
-        Plot the value across episodes.
-        """
-        if ax is None:
-            ax = plt.gca()
-        
-        # Layout
-        num_episodes = getattr(self, 'value').shape[0]  # Shape[0] = episodes
-        ax.set_xticks(np.arange(num_episodes, step=100))
-        ax.set_xlim([0, num_episodes-1])
-        ax.set_xlabel('Episode')
-
-        # Get data
-        data = getattr(self, 'value')
-        x_axis = np.arange(num_episodes)
-
-        # Plot value
-        line, = ax.plot(x_axis, data, label=f'{self.name}',
-                color=color, linestyle=linestyle)
-
-        return line
-
     def save(self, filename=None):
         """
         Save the entire History object to a file using pickle.
@@ -164,227 +74,201 @@ class History:
             history = pickle.load(file)
 
         return history
-    
-    # -------------------
-    # - Private methods -
-    # -------------------
 
-    def _compute_value(self, env, episode):
+    def compute_value(self, env, episode, agent, shift=0):
         """
-        Compute the value of an episode.
+        Compute the value of an episode
         """
         discount = env.beta ** np.arange(env.T)
         return np.sum(self.utility[episode] * discount)
     
-    def _compute_savings_rate(self, env, episode):
+    def compute_euler_error(self, env, episode, agent, shift=0):
         """
-        Compute the savings rate of an episode.
+        Compute the relative Euler error
         """
-        period = env.period
+        t = env.period
+        e = episode
 
-        return self.a[episode, period] / self.m[episode, period]
-    
-    def _compute_savings(self, env, episode):
-        """
-        Compute the savings rate of an episode.
-        """
-        period = env.period
+        c = self.c[e, t]
+        a = self.a[e, t]
 
-        if period == 0:
-            return self.a[episode, period]
+        # No Euler error in the last period
+        if t == env.T - 1:
+            euler_error = np.nan
+        
         else:
-            return self.a[episode, period] - self.a[episode, period-1]
-        
-    def _compute_consumption_rate(self, env, episode):
-        """
-        Compute the consumption rate of an episode.
-        """
-        period = env.period
+            # Right-hand side
+            rhs = 0.0            
+            for idx in range(env.Nshocks):
+                
+                # i. shocks
+                psi_w = env.psi_w[idx]
+                xi_w = env.xi_w[idx]
+                psi = env.psi[idx]
+                xi = env.xi[idx]
 
-        return self.c[episode, period] / self.m[episode, period]
-    
-    def _compute_wealth_ratio(self, env, episode):
-        """
-        Compute the wealth ratio of an episode.
-        """
-        period = env.period
+                # ii. weight
+                weight = psi_w * xi_w
 
-        return self.m[episode, period] / self.p[episode, period]
-    
-    def _normalize_cash_on_hand(self, env, episode):
-        """
-        Normalize cash-on-hand by dividing by permanent income.
-        """
-        period = env.period
+                # iii. next-period states
+                m_plus = (env.R / psi) * a + xi
 
-        return self.m[episode, period] / self.p[episode, period]
-    
-    def _normalize_consumption(self, env, episode):
+                # iv. next-period consumption
+                c_share = agent.select_action(
+                    state=np.array([m_plus,(t+1)/(env.T-1)]),
+                    noise=False,
+                    shift=shift
+                )
+                c_plus = c_share * m_plus
 
-        period = env.period
+                # v. next-period marginal utility
+                rhs += weight * env.beta * env.R * ((c_plus+1e-8) ** (-env.rho))
 
-        return self.c[episode, period] / self.p[episode, period]
-    
-    def _normalize_assets(self, env, episode):
-        
-        period = env.period
+            # Disregard constrained
+            constrained = ((c + a)**(-env.rho) >= rhs)
 
-        return self.a[episode, period] / self.p[episode, period]
-    
-    # ----------------------------------------------------------------
-    #  1) Plot c vs. (m/p) using simulated data
-    # ----------------------------------------------------------------
-    def plot_consumption_vs_wealth_by_t(
-        self, 
-        t, 
-        ax=None, 
-        marker='o', 
-        alpha=0.3, 
-        do_sort=True,
-        do_bin=False,
-        bins=20
-    ):
-        """
-        Plot the empirical policy function c_t vs. (m_t / p_t) 
-        for a *specific* time t (finite-horizon setting).
-        
-        Parameters
-        ----------
-        t : int
-            The time/period for which we want the policy function.
-        ax : matplotlib.axes.Axes, optional
-            Axis object on which to plot. If None, will use current axis.
-        marker : str, optional
-            Marker style for scatter. Default 'o'.
-        alpha : float, optional
-            Transparency for points. Default 0.3.
-        do_sort : bool, optional
-            If True, sort the data by x so that the line-plot is clearer.
-            (Often helpful if do_bin=False.)
-        do_bin : bool, optional
-            If True, bin x-values and plot mean c in each bin 
-            rather than plotting individual points.
-        bins : int, optional
-            Number of bins if do_bin=True.
-        """
-        if ax is None:
-            ax = plt.gca()
-
-        # shape of self.m is (n_episodes, T).
-        # We extract the column t across all episodes.
-        m_col = self.m[:, t]  # shape (n_episodes,)
-        p_col = self.p[:, t]
-        c_col = self.c[:, t]
-
-        # Filter out cases where p == 0
-        valid_mask = (p_col > 0)
-        m_col = m_col[valid_mask]
-        p_col = p_col[valid_mask]
-        c_col = c_col[valid_mask]
-
-        x_col = m_col / p_col  # (m_t / p_t)
-
-        range_mask = (x_col > 0) & (x_col < 5)
-        x_col = x_col[range_mask]
-        c_col = c_col[range_mask]
-
-        if do_bin:
-            # Bin the data into intervals of x
-            # then plot the average c in each bin
-            bin_edges = np.linspace(x_col.min(), x_col.max(), bins+1)
-            idx = np.digitize(x_col, bin_edges) - 1  # which bin each point goes to
-            c_means = []
-            x_centers = []
-            for b in range(bins):
-                in_bin = (idx == b)
-                if np.any(in_bin):
-                    c_means.append(np.mean(c_col[in_bin]))
-                    # midpoint of the bin
-                    x_centers.append(0.5*(bin_edges[b] + bin_edges[b+1]))
-            
-            ax.plot(x_centers, c_means, marker='o', linestyle='-', alpha=0.8)
-        else:
-            # Either scatter everything,
-            # or sort + then do a line or scatter plot
-            if do_sort:
-                sort_idx = np.argsort(x_col)
-                x_sorted = x_col[sort_idx]
-                c_sorted = c_col[sort_idx]
-                ax.plot(x_sorted, c_sorted, marker=marker, linestyle='none', alpha=alpha)
+            if constrained:
+                euler_error = np.nan
             else:
-                # Just scatter raw (x, c)
-                ax.scatter(x_col, c_col, marker=marker, alpha=alpha)
+                euler_error = c - rhs**(-1/env.rho)
 
-        ax.set_xlabel('$m_t / p_t$')
-        ax.set_ylabel(f'$c_t$')
-        ax.set_title(f'Empirical policy at time t={t} ({self.name})')
-        return ax
-
-    # ----------------------------------------------------------------
-    #  2) Compute Euler errors to assess accuracy
-    # ----------------------------------------------------------------
-    def compute_euler_errors(self, rho, beta, R, ignore_borrowing_binds=True):
+        return euler_error
+    
+    def compute_trans_euler_error(self, env, n_episodes):
         """
-        Compute the relative Euler error for each (episode, period) where the household
-        is *not* liquidity constrained. The standard CRRA Euler condition is:
-        
-            c_t^(-rho)  =  beta * R * E[ c_{t+1}^(-rho) ]
-
-        We'll compute a "relative log-error" measure using Equation (3.1) from the paper:
-        
-            E_t = log10( | Delta_t / c_t | )
-        
-        where Delta_t is the deviation from the Euler equation.
-
-        If ignore_borrowing_binds=True, skip periods where assets=0 (corner solutions).
-
-        Returns: euler_errors, shape = (n_episodes, T)
         """
-        n_episodes, T = self.c.shape
-        euler_errors = np.full((n_episodes, T), np.nan)
+        self.trans_euler_error = np.zeros([n_episodes,env.T])
+        self.constrained = np.zeros([n_episodes,env.T])
 
-        for ep in range(n_episodes):
-            for t in range(T - 1):  # no c_{t+1} for the last period
-                # Skip if ignoring borrowing binds and assets are effectively zero
-                if ignore_borrowing_binds and self.a[ep, t] <= 1e-12:
-                    continue
+        for t in range(env.T):
+            rel_euler_errors = self.euler_error[:, t]/self.c[:, t]
+            self.constrained[:, t] = np.isnan(rel_euler_errors).astype(int)
+            self.trans_euler_error[:,t] = np.log10(np.abs(rel_euler_errors))
+    
+    # -----------------------
+    # - Functions for plots -
+    # -----------------------
 
-                c_t = self.c[ep, t]
-                c_next = self.c[ep, t + 1]
-
-                # If consumption is non-positive, skip the calculation
-                if c_t <= 0 or c_next <= 0:
-                    continue
-
-                # Compute deviation Delta_t from the Euler equation
-                lhs = c_t ** (-rho)
-                rhs = beta * R * (c_next ** (-rho))
-                delta = lhs - rhs
-
-                # Relative Euler error: log10(|Delta_t / c_t|)
-                relative_error = np.log10(np.abs(delta / c_t))
-                euler_errors[ep, t] = relative_error
-
-        return euler_errors
-
-    def plot_euler_errors(self, rho, beta, R, ignore_borrowing_binds=True, ax=None):
+    def plot_avg_trajectory2(self, var, color, linestyle, linewidth,
+        linestart, cf_start, label, alpha=1.0, ax=None):
         """
-        Compute Euler errors and plot their average over time.
         """
+
+        # Use the provided axis or get the current axis
         if ax is None:
             ax = plt.gca()
 
-        euler_errors = self.compute_euler_errors(rho, beta, R,
-                                    ignore_borrowing_binds=ignore_borrowing_binds)
+        data = getattr(self, var)
+        
+        # Use nanmean and nanstd due to Euler errors
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Mean of empty slice")
+            warnings.filterwarnings("ignore", message="Degrees of freedom <= 0 for slice")
 
-        # We'll take the absolute value of the errors and average across episodes
-        abs_errors = np.nanmean(np.abs(euler_errors), axis=0)  # shape (T,)
-        x_axis = np.arange(len(abs_errors))
+            var_avg = np.nanmean(data, axis=0)
+            var_std = np.nanstd(data, axis=0)
+            var_p5 = np.nanpercentile(data, 5, axis=0)
+            var_p95 = np.nanpercentile(data, 95, axis=0)
+ 
+        num_periods = getattr(self, var).shape[1]  # Shape[1] = T
+        ax.set_xticks(np.arange(num_periods, step=2))
+        ax.set_xlim([0, num_periods-1])
+        ax.set_xlabel('$t$')
 
-        ax.plot(x_axis, abs_errors, label=f'{self.name} Euler Error')
-        ax.set_xlabel('t')
-        ax.set_ylabel('Mean |Euler Error|')
-        ax.set_title('Euler Errors over time')
-        ax.legend()
+        x_axis = np.arange(num_periods)
 
-        return ax
+        # Plot average trajectory
+        line, = ax.plot(
+            x_axis[linestart:], 
+            var_avg[linestart:], 
+            label=label, 
+            color=color, 
+            linestyle=linestyle,
+            linewidth=linewidth, 
+            alpha=alpha
+        )
+            
+        # ax.scatter(
+        #     x_axis[linestart:],
+        #     var_avg[linestart:],
+        #     label=None,
+        #     color=color,
+        #     alpha=alpha,
+        #     s=5
+        # )    
+
+        # Plot confidence band
+        if cf_start is not None:
+            upper = var_avg + var_std
+            lower = var_avg - var_std
+            x_axis = x_axis
+
+            ax.fill_between(x_axis[cf_start:], lower[cf_start:], 
+                upper[cf_start:], color=color, alpha=0.2)
+            
+        return line   
+
+    def plot_sd2(self, var, color, linestyle, linewidth,
+        linestart, label, alpha=1.0, ax=None):
+        """
+        """
+
+        # Use the provided axis or get the current axis
+        if ax is None:
+            ax = plt.gca()
+
+        data = getattr(self, var)
+
+        # Use nanstd and nanstd due to Euler errors
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Mean of empty slice")
+            warnings.filterwarnings("ignore", message="Degrees of freedom <= 0 for slice")
+            var_std = np.nanstd(data, axis=0)
+        
+        num_periods = getattr(self, var).shape[1]  # Shape[1] = T
+        ax.set_xticks(np.arange(num_periods, step=2))
+        ax.set_xlim([0, num_periods-1])
+        ax.set_xlabel('$t$')
+
+        x_axis = np.arange(num_periods)
+
+        # Plot average trajectory
+        line, = ax.plot(x_axis[linestart:], var_std[linestart:], 
+            label=label, color=color, linestyle=linestyle,
+            linewidth=linewidth, alpha=alpha)
+            
+        return line      
+    
+    def plot_value(self, color, linestyle, linewidth,
+        label, alpha=1.0, ax=None):
+        """
+        Plot the value across episodes.
+        """
+        if ax is None:
+            ax = plt.gca()
+        
+        data = getattr(self, 'value')
+
+        num_episodes = getattr(self, 'value').shape[0]  # Shape[0] = episodes
+        ax.set_xticks(np.arange(num_episodes, step=100))
+        ax.set_xlim([0, num_episodes-1])
+        ax.set_xlabel('Episode')
+
+        x_axis = np.arange(num_episodes)
+
+        line, = ax.plot(x_axis, data, color=color, linestyle=linestyle,
+            linewidth=linewidth, label=label)
+
+        return line
+    
+    def plot_value_error(self, color, linestyle, linewidth,
+        label, alpha=1.0, ax=None):
+        """
+        Plot the value across episodes.
+        """
+        if ax is None:
+            ax = plt.gca()
+        
+        data = getattr(self, 'value')
+
+        num_episodes = getattr(self, 'value').shape[0]

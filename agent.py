@@ -4,18 +4,21 @@ import numpy as np
 import wandb
 import copy
 
-from history import History
+import warnings
+# warnings.simplefilter("error", RuntimeWarning)
 
+from history import History
 
 class Agent(ABC):
     '''
     Abstract class for agents.
     '''
     def __init__(self):
-        self.history = None
         self.print_freq = 100
         self.updates_per_step = 1
         self.warmup_episodes = 5
+        
+        self.history = None  # Initialize later
 
     @abstractmethod
     def select_action(self, state, noise=False):
@@ -25,51 +28,24 @@ class Agent(ABC):
         pass
 
     def interact(self, env, n_episodes, train, keep_history=False,
-        shift=0, track=None, do_print=True, inis=None):
+        shift=0, track=False, do_print=True, inis=None):
         '''
         Simulate interaction with an environment using the agent
         '''
+
         if keep_history is False:
-            # Initialize history, otherwise overwrite
+            # Custom vars must be in order they are calculated
             custom_vars = [
             
             # Life-time utility
             {'name': 'value', 
             'shape': (n_episodes,), 
-            'function': History._compute_value},
+            'function': History.compute_value},
 
-            # Consumption rate
-            {'name': 'c_rate',
-            'shape': (n_episodes, env.T),
-            'function': History._compute_consumption_rate},
-            
-            # Savings rate
-            {'name': 's',
-            'shape': (n_episodes, env.T),
-            'function': History._compute_savings_rate},
-
-            # Savings
-            {'name': 'savings',
-            'shape': (n_episodes, env.T),
-            'function': History._compute_savings},
-            
-            # Wealth ratio
-            {'name': 'x',
-            'shape': (n_episodes, env.T),
-            'function': History._compute_wealth_ratio},
-
-            # Normalized variables
-            {'name': 'm/p',
-            'shape': (n_episodes, env.T),
-            'function': History._normalize_cash_on_hand},
-
-            {'name': 'c/p',
-            'shape': (n_episodes, env.T),
-            'function': History._normalize_consumption},
-
-            {'name': 'a/p',
-            'shape': (n_episodes, env.T),
-            'function': History._normalize_assets}
+            # Euler error
+            {'name': 'euler_error',
+             'shape': (n_episodes, env.T),
+             'function': History.compute_euler_error},
 
             ]
 
@@ -77,17 +53,13 @@ class Agent(ABC):
             self.history = History(name, env, n_episodes,
                 custom_vars=custom_vars)
 
-        # Run episodes
         if train:
-            #wandb.init(project='Speciale')
+            self.reset_explore_noise()
 
-            self.set_explore_noise(self.ini_explore_noise)
-
-            if track is not None:
-                agents = []
+            self.history.a_loss = np.zeros(n_episodes)
+            self.history.c_loss = np.zeros(n_episodes)
 
             for episode in range(n_episodes):
-
                 if inis is not None:
                     ini = inis[episode]
                 else:
@@ -95,26 +67,26 @@ class Agent(ABC):
 
                 self._run_episode(env, episode, train, ini=ini, shift=shift)
 
-                if track and episode in track:
-                    agents.append(copy.deepcopy(self))
+                if hasattr(self, 'explore_noise'):
+                    self.decay_explore_noise(episode)
 
                 if do_print:
                     self._print_progress(episode)
 
-            #wandb.finish()
+                if episode == n_episodes - 1 and hasattr(self.history, 'euler_error'):
+                    self.history.compute_trans_euler_error(env, n_episodes) 
 
         else:
             for episode in range(n_episodes):
-
                 if inis is not None:
                     ini = inis[episode]
                 else:
                     ini = None
 
-                self._run_episode(env, episode, train, ini, shift=shift)
+                self._run_episode(env, episode, train, ini=ini, shift=shift)
 
-        if track:
-            return agents
+                if episode == n_episodes - 1:
+                    self.history.compute_trans_euler_error(env, n_episodes) 
 
     # -------------------
     # - Private methods -
@@ -126,17 +98,20 @@ class Agent(ABC):
         '''
         state = env.reset(ini)
         done = False
+
+        c_losses = []
+        a_losses = []
         
         while not done:
             if train and episode < self.warmup_episodes:
-                    action = env.action_space.sample()
+                action = env.action_space.sample()
             else:
-                action = self.select_action(state, noise=train, 
-                    shift=shift)
+                action = self.select_action(state, noise=train, shift=shift)
             
             # Save history before taking step
             env.compute_reward(action)
-            self.history.record_step(env, episode)
+            if self.history is not None:
+                self.history.record_step(env, episode, self, shift=shift)
             next_state, reward, done, _ = env.step(action)
             
             if train:
@@ -146,16 +121,29 @@ class Agent(ABC):
                 for _ in range(self.updates_per_step):
                     c_loss, a_loss = self.learn()
 
-                if hasattr(self, 'explore_noise'):
-                    self.explore_noise *= self.noise_decay
+                    if a_loss is not None and c_loss is not None:
+                        c_losses.append(c_loss)
+                        a_losses.append(a_loss)
 
-                #if a_loss is not None:
+                # if a_loss is not None:
                 #    wandb.log({
                 #        "critic_loss": c_loss,
                 #        "actor_loss": a_loss
                 #    })
 
-            state = next_state  
+            state = next_state
+            #if self.name == 'DP household':
+            #    print(state)
+
+        if train == True:
+
+            # Mean will be empty if replay buffer < batch size
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Mean of empty slice")
+                warnings.filterwarnings("ignore", message="invalid value encountered in scalar divide")
+
+                self.history.a_loss[episode] = np.mean(a_losses)
+                self.history.c_loss[episode] = np.mean(c_losses)
 
     def _print_progress(self, episode):
         if (episode + 1) % self.print_freq == 0:

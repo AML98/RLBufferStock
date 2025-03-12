@@ -6,7 +6,6 @@ import torch.optim as optim
 
 from agent import Agent
 from networks import Actor, Critic
-from linear_approx import LinearActor, LinearCritic
 from replay_buffer import ReplayBuffer
 
 
@@ -19,6 +18,7 @@ class DDPGAgent(Agent):
         Initialize the DDPGAgent.
         """
         super().__init__()
+        self.name = 'DDPG household'
 
         # Set to environment values
         self.beta = 0.96
@@ -26,18 +26,18 @@ class DDPGAgent(Agent):
         self.action_high = 1.0
 
         # Network settings
-        self.actor_lr = 1e-4
-        self.critic_lr = 1e-3
-        self.actor_hidden_dim = 128
-        self.critic_hidden_dim = 128
+        self.actor_lr = 0.5*1e-4
+        self.critic_lr = 1.0*1e-4
+        self.actor_hidden_dim = 64
+        self.critic_hidden_dim = 64 
 
         # Other hyperparameters
         self.tau = 0.005
-        self.batch_size = 512
+        self.batch_size = 256
         self.buffer_size = 1_000_000
         self.ini_explore_noise = 0.2
         self.explore_noise = None  # Will be depreciated - set later
-        self.noise_decay = 0.9975
+        self.noise_decay = 0.01
 
         # Update attributes with kwargs
         for key, value in kwargs.items():
@@ -50,7 +50,7 @@ class DDPGAgent(Agent):
         self.replay_buffer = ReplayBuffer(max_size=self.buffer_size)
 
         # Exploration noise
-        self.set_explore_noise(self.ini_explore_noise)
+        self.reset_explore_noise()
 
     # ------------------
     # - Public methods -
@@ -77,11 +77,11 @@ class DDPGAgent(Agent):
         critic_loss = self._compute_critic_loss(batch)
 
         # Update critic
-        self._update_network(self.critic_optimizer, critic_loss)
+        self._update_network(self.critic, self.critic_optimizer, critic_loss)
 
         # Update actor
         actor_loss = self._compute_actor_loss(batch)
-        self._update_network(self.actor_optimizer, actor_loss)
+        self._update_network(self.actor, self.actor_optimizer, actor_loss)
 
         # Soft update targets
         self._soft_update(self.actor, self.actor_target)
@@ -101,15 +101,23 @@ class DDPGAgent(Agent):
         action = self.actor(state).detach().numpy()[0]
 
         if noise:
-            action += self.explore_noise * np.random.randn(*action.shape)
+            action += np.random.normal(0, self.explore_noise, size=action.shape)
 
         # Clip action to valid range
         action = np.clip(action, self.action_low, self.action_high)
 
         return action
 
-    def set_explore_noise(self, explore_noise):
-        self.explore_noise = explore_noise
+    def reset_explore_noise(self):
+        '''
+        '''
+        self.explore_noise = self.ini_explore_noise
+
+    def decay_explore_noise(self, episode):
+        '''
+        '''
+        self.explore_noise = (self.ini_explore_noise 
+                              * np.exp(-self.noise_decay * episode))
 
     # -------------------
     # - Private methods -
@@ -159,12 +167,13 @@ class DDPGAgent(Agent):
         actor_loss = -self.critic(states, self.actor(states)).mean()
         return actor_loss
 
-    def _update_network(self, optimizer, loss):
+    def _update_network(self, network, optimizer, loss):
         """
         Update network parameters with the given optimizer and loss.
         """
         optimizer.zero_grad()
         loss.backward()
+        # nn.utils.clip_grad_norm_(network.parameters(), max_norm=1.0)  # Prevent exploding gradients
         optimizer.step()
 
     def _soft_update(self, local_model, target_model):
